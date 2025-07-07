@@ -1,0 +1,8 @@
+{
+    "require": {
+        "slim/slim": "3.*",
+        "kreait/firebase-php": "^5.26",
+        "google/apiclient": "^2.18",
+        "slim/http-cache": "^1.2"
+    }
+}

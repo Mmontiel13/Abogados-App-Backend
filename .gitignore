@@ -1,0 +1,15 @@
+# --- FRONTEND (Next.js / Node) ---
+node_modules/
+.next/
+dist/
+.env
+
+# --- BACKEND (PHP / Slim) ---
+vendor/
+.env
+
+# --- ARCHIVOS SENSIBLES ---
+.DS_Store
+
+# --- VSCODE ---
+.vscode/
