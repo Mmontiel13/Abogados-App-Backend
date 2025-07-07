@@ -56,20 +56,7 @@ $app->post('/case', function (Request $request, Response $response) {
 
     $expedienteFolderId = null;
     try {
-        $googleClient = new \Google\Client();
-        $credentialsPath = '.././credentials-google.json';
-
-        if (!file_exists($credentialsPath)) {
-            throw new \Exception("El archivo de credenciales no existe en: " . $credentialsPath);
-        }
-
-        $googleClient->setAuthConfig($credentialsPath);
-        $googleClient->addScope(Drive::DRIVE_FILE); // Necesario para crear/gestionar archivos y carpetas
-        $googleClient->setSubject(null); // Si usas una cuenta de servicio, esto es común
-
-        $googleClient->fetchAccessTokenWithAssertion();
-        $service = new Drive($googleClient);
-
+        $service = getGoogleDriveService();
         $myPersonalDataFilesFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA'; // Tu ID de carpeta raíz
 
         // 1. Encontrar o crear la carpeta del cliente
@@ -84,7 +71,6 @@ $app->post('/case', function (Request $request, Response $response) {
         if (!$expedienteFolderId) {
             throw new \Exception("No se pudo crear la carpeta para el expediente " . $caseFileId . " en Google Drive.");
         }
-
     } catch (\Exception $e) {
         error_log("ERROR Google Drive POST /case (creación de carpetas): " . $e->getMessage());
         $payload = ['error' => 'Error al crear carpetas en Google Drive: ' . $e->getMessage()];
@@ -131,7 +117,7 @@ $app->get('/cases/client/{clientId}', function (Request $request, Response $resp
     $clientId = $args['clientId'];
     $allCaseFiles = $this->firebaseDb->getReference('expedientes')->getValue() ?? [];
 
-    $clientCases = [];
+    $clientCases = [];  
     foreach ($allCaseFiles as $caseFileId => $caseFile) {
         if (isset($caseFile['clientId']) && $caseFile['clientId'] === $clientId) {
             $clientCases[] = [
@@ -167,18 +153,7 @@ $app->get('/case/{id}/documents', function (Request $request, Response $response
     // 2. Listar los archivos en esa carpeta de Google Drive
     $driveDocuments = [];
     try {
-        $googleClient = new \Google\Client();
-        $credentialsPath = '.././credentials-google.json';
-
-        if (!file_exists($credentialsPath)) {
-            throw new \Exception("El archivo de credenciales no existe en: " . $credentialsPath);
-        }
-
-        $googleClient->setAuthConfig($credentialsPath);
-        $googleClient->addScope(Drive::DRIVE_FILE);
-        $googleClient->fetchAccessTokenWithAssertion();
-        $service = new Drive($googleClient);
-
+        $service = getGoogleDriveService();
         $query = "'" . $expedienteFolderId . "' in parents and trashed=false";
         $results = $service->files->listFiles([
             'q' => $query,
@@ -194,7 +169,6 @@ $app->get('/case/{id}/documents', function (Request $request, Response $response
                 'size' => $file->getSize(), // Tamaño en bytes
             ];
         }
-
     } catch (\Exception $e) {
         error_log("ERROR Google Drive GET /case/{id}/documents: " . $e->getMessage());
         $payload = ['error' => 'Error al listar documentos de Google Drive: ' . $e->getMessage()];
@@ -216,7 +190,7 @@ $app->get('/case/{id}', function (Request $request, Response $response, $args) {
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
     // Asegurarse de que 'documents' es un array vacío o se elimina, ya que ahora se obtendrán de Drive
-    $caseFile['documents'] = []; 
+    $caseFile['documents'] = [];
 
     $response->getBody()->write(json_encode($caseFile));
     return $response->withHeader('Content-Type', 'application/json');
@@ -297,8 +271,6 @@ $app->post('/case/{id}', function (Request $request, Response $response, array $
     }
 });
 
-
-// Eliminar expediente
 $app->delete('/case/{id}', function (Request $request, Response $response, $args) {
     $id = $args['id'];
     $caseFileRef = $this->firebaseDb->getReference('expedientes/' . $id);
@@ -315,36 +287,19 @@ $app->delete('/case/{id}', function (Request $request, Response $response, $args
 
     if ($expedienteFolderId) {
         try {
-            $googleClient = new Client();
-            $credentialsPath = '.././credentials-google.json';
-            if (!file_exists($credentialsPath)) {
-                error_log("ERROR CRÍTICO: El archivo de credenciales de Google Drive NO EXISTE en la ruta: " . $credentialsPath);
-            } else {
-                $googleClient->setAuthConfig($credentialsPath);
-                $googleClient->addScope(Drive::DRIVE_FILE); // Necesario para eliminar archivos/carpetas
-                $googleClient->fetchAccessTokenWithAssertion();
-                $service = new Drive($googleClient);
-
-                // Eliminar la carpeta del expediente de Google Drive
-                // Nota: La API de Drive no permite eliminar directamente una carpeta no vacía
-                // sin eliminar primero su contenido. Para simplificar, si la carpeta tiene contenido,
-                // la eliminación de la carpeta fallará a menos que uses un método más avanzado.
-                // Para este escenario, intentaremos eliminar la carpeta directamente.
-                // Si falla por no estar vacía, el expediente se borrará de Firebase pero la carpeta de Drive persistirá.
-                try {
-                    $service->files->delete($expedienteFolderId);
-                    error_log("Carpeta de Drive eliminada: " . $expedienteFolderId . " para expediente: " . $id);
-                } catch (\Google\Service\Exception $e) {
-                    error_log("Error al eliminar carpeta de Drive " . $expedienteFolderId . " para expediente " . $id . ": " . $e->getMessage());
-                    // Esto suele ocurrir si la carpeta no está vacía.
-                    // Podrías implementar una lógica para listar y eliminar archivos recursivamente aquí si es crítico.
-                }
+            $service = getGoogleDriveService();
+            try {
+                $service->files->delete($expedienteFolderId);
+                error_log("Carpeta de Drive eliminada: " . $expedienteFolderId . " para expediente: " . $id);
+            } catch (\Google\Service\Exception $e) {
+                error_log("Error al eliminar carpeta de Drive $expedienteFolderId: " . $e->getMessage());
+                // Si la carpeta no está vacía, fallará. Se puede mejorar con lógica recursiva.
             }
         } catch (\Exception $e) {
-            error_log("Error fatal en la inicialización/autenticación de Google Drive para eliminación de expediente " . $id . ": " . $e->getMessage());
+            error_log("Error en autenticación Google Drive: " . $e->getMessage());
         }
     }
-    // --- FIN Lógica para eliminar la carpeta de Drive asociada ---
+    // --- FIN lógica para eliminar carpeta de Drive ---
 
     $caseFileRef->remove();
 
@@ -352,3 +307,4 @@ $app->delete('/case/{id}', function (Request $request, Response $response, $args
     $response->getBody()->write(json_encode($payload));
     return $response->withHeader('Content-Type', 'application/json');
 });
+

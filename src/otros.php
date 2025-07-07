@@ -48,20 +48,7 @@ $app->post('/other', function (Request $request, Response $response) {
     // --- Lógica de Google Drive API para crear carpetas ---
     $otherSpecificFolderId = null;
     try {
-        $googleClient = new Client();
-        $credentialsPath = '.././credentials-google.json';
-
-        if (!file_exists($credentialsPath)) {
-            throw new \Exception("El archivo de credenciales no existe en: " . $credentialsPath);
-        }
-
-        $googleClient->setAuthConfig($credentialsPath);
-        $googleClient->addScope(Drive::DRIVE_FILE);
-        $googleClient->setSubject(null);
-
-        $googleClient->fetchAccessTokenWithAssertion();
-        $service = new Drive($googleClient);
-
+        $service = getGoogleDriveService();
         $myPersonalDataFilesFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA'; // Tu ID de carpeta raíz
 
         // Sub-carpeta específica para "Otros archivos" dentro de DataFiles
@@ -148,18 +135,7 @@ $app->get('/other/{id}/documents', function (Request $request, Response $respons
     // 2. Listar los archivos en esa carpeta de Google Drive
     $driveDocuments = [];
     try {
-        $googleClient = new \Google\Client();
-        $credentialsPath = '.././credentials-google.json';
-
-        if (!file_exists($credentialsPath)) {
-            throw new \Exception("El archivo de credenciales no existe en: " . $credentialsPath);
-        }
-
-        $googleClient->setAuthConfig($credentialsPath);
-        $googleClient->addScope(Drive::DRIVE_FILE);
-        $googleClient->fetchAccessTokenWithAssertion();
-        $service = new Drive($googleClient);
-
+        $service = getGoogleDriveService();
         $query = "'" . $otherFolderId . "' in parents and trashed=false";
         $results = $service->files->listFiles([
             'q' => $query,
@@ -313,25 +289,17 @@ $app->delete('/other/{id}', function (Request $request, Response $response, $arg
 
     if ($otherFolderId) {
         try {
-            $googleClient = new Client();
-            $credentialsPath = '.././credentials-google.json';
-            if (!file_exists($credentialsPath)) {
-                error_log("ERROR CRÍTICO: El archivo de credenciales de Google Drive NO EXISTE en la ruta: " . $credentialsPath);
-            } else {
-                $googleClient->setAuthConfig($credentialsPath);
-                $googleClient->addScope(Drive::DRIVE_FILE);
-                $googleClient->fetchAccessTokenWithAssertion();
-                $service = new Drive($googleClient);
+            $service = getGoogleDriveService(); // Usamos la función del archivo utils.php
 
-                try {
-                    // Eliminar la carpeta del archivo "Otro" de Google Drive
-                    $service->files->delete($otherFolderId);
-                    error_log("Carpeta de Drive eliminada: " . $otherFolderId . " para archivo 'Otro': " . $id);
-                } catch (\Google\Service\Exception $e) {
-                    error_log("Error al eliminar carpeta de Drive " . $otherFolderId . " para archivo 'Otro' " . $id . ": " . $e->getMessage());
-                    // Esto suele ocurrir si la carpeta no está vacía.
-                }
+            try {
+                // Eliminar la carpeta del archivo "Otro" de Google Drive
+                $service->files->delete($otherFolderId);
+                error_log("Carpeta de Drive eliminada: " . $otherFolderId . " para archivo 'Otro': " . $id);
+            } catch (\Google\Service\Exception $e) {
+                error_log("Error al eliminar carpeta de Drive " . $otherFolderId . " para archivo 'Otro' " . $id . ": " . $e->getMessage());
+                // Esto suele ocurrir si la carpeta no está vacía.
             }
+
         } catch (\Exception $e) {
             error_log("Error fatal en la inicialización/autenticación de Google Drive para eliminación de archivo 'Otro' " . $id . ": " . $e->getMessage());
         }
@@ -344,3 +312,4 @@ $app->delete('/other/{id}', function (Request $request, Response $response, $arg
     $response->getBody()->write(json_encode($payload));
     return $response->withHeader('Content-Type', 'application/json');
 });
+

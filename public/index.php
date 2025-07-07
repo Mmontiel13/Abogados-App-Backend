@@ -9,16 +9,16 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 $config = [
     'settings' => [
-        'displayErrorDetails' => true, // Para debug, poner false en producción
+        'displayErrorDetails' => false, // Para debug, poner false en producción
     ],
 ];
 
 // Configuración adicional para Slim 3 para Content-Length Middleware
 $app = new App($config);
-
+$credentialsArray = json_decode($_ENV['GOOGLE_APPLICATION_CREDENTIALS_JSON'], true);
 // Crear instancia de Firebase
 $firebase = (new Factory)
-    ->withServiceAccount(__DIR__ . '/../credentials.json')
+    ->withServiceAccount($credentialsArray)
     ->withDatabaseUri('https://calva-corro-bd-default-rtdb.firebaseio.com'); // URL correcta aquí
 
 $firebaseDb = $firebase->createDatabase();
@@ -37,7 +37,10 @@ require __DIR__ . '/../src/utils/drive_helpers.php'; // <--- ¡Esta línea debe 
 $app->options('/{routes:.+}', function (Request $request, Response $response) {
     // Maneja las solicitudes OPTIONS preflight.
     // Simplemente devuelve una respuesta 200 OK con los encabezados CORS adecuados.
-    return $response;
+    return $response
+        ->withHeader('Access-Control-Allow-Origin', 'https://cca-app.vercel.app') // ¡CAMBIADO!
+        ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
 $app->add(function (Request $request, Response $response, $next) {
@@ -45,7 +48,7 @@ $app->add(function (Request $request, Response $response, $next) {
     // En producción, deberías reemplazar '*' con el dominio específico de tu frontend.
     $response = $next($request, $response);
     return $response
-        ->withHeader('Access-Control-Allow-Origin', '*') // O tu dominio específico: 'http://localhost:3000'
+        ->withHeader('Access-Control-Allow-Origin', 'https://cca-app.vercel.app') // O tu dominio específico: 'http://localhost:3000'
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
