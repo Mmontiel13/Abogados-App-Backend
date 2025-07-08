@@ -1,11 +1,16 @@
 <?php
 require __DIR__ . '/../vendor/autoload.php';
 
-// // Cargar variables de entorno desde .env si existe
-// if (file_exists(__DIR__ . '/../.env')) {
-//     $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
-//     $dotenv->load();
-// }
+if (($_ENV['APP_ENV'] ?? 'development') === 'production') {
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE); // Ignorar advertencias y notices
+    ini_set('display_errors', 0); // No mostrar errores en la salida (se irán a los logs)
+    ini_set('log_errors', 1); // Asegurarse de que los errores se registren
+} else {
+    // Para desarrollo local, mostrar todos los errores
+    error_reporting(E_ALL);
+    ini_set('display_errors', 1);
+    ini_set('log_errors', 0);
+}
 
 use Slim\App;
 use Kreait\Firebase\Factory;
@@ -90,6 +95,13 @@ $app->add(function (Request $request, Response $response, $next) {
 
 // Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
 $container['settings']['allowedOrigin'] = $allowedOrigin;
+
+// --- RUTA DE PRUEBA SIMPLE ---
+$app->get('/', function (Request $request, Response $response) {
+    $response->getBody()->write("¡Backend de CCA App funcionando!");
+    return $response->withHeader('Content-Type', 'text/plain');
+});
+// --- FIN RUTA DE PRUEBA SIMPLE ---
 
 // Cargar funciones auxiliares
 require __DIR__ . '/../src/utils/drive_helpers.php';
