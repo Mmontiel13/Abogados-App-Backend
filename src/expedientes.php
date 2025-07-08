@@ -2,14 +2,8 @@
 
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-use Google\Client;
-use Google\Service\Drive;
-use Google\Service\Drive\DriveFile;
 use Slim\Http\UploadedFile;
 
-require '../vendor/autoload.php';
-
-// NOTA: La función findOrCreateFolder se ha movido a src/utils/drive_helpers.php
 // Ruta POST para crear un nuevo expediente
 $app->post('/case', function (Request $request, Response $response) {
     $data = $request->getParsedBody();
@@ -38,7 +32,7 @@ $app->post('/case', function (Request $request, Response $response) {
     }
 
     $existingCaseFiles = $this->firebaseDb->getReference('expedientes')->getValue() ?? [];
-    foreach ($existingCaseFiles as $caseFileKey => $existingCaseFile) {
+    foreach ($existingCaseFiles as $existingCaseFile) {
         if (
             strtolower(trim($existingCaseFile['title'] ?? '')) === strtolower(trim($data['title'])) &&
             trim($existingCaseFile['clientId'] ?? '') === trim($data['clientId'])
@@ -54,30 +48,17 @@ $app->post('/case', function (Request $request, Response $response) {
     $newCounter = $counter + 1;
     $caseFileId = sprintf("EXP-%03d", $newCounter);
 
-    $expedienteFolderId = null;
     try {
-        $service = getGoogleDriveService();
-        $myPersonalDataFilesFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA'; // Tu ID de carpeta raíz
-
-        // 1. Encontrar o crear la carpeta del cliente
-        $clienteFolderId = findOrCreateFolder($service, $myPersonalDataFilesFolderId, 'cliente-' . $data['clientId']);
-        if (!$clienteFolderId) {
-            throw new \Exception("No se pudo crear la carpeta para el cliente " . $data['clientId'] . " en Google Drive.");
-        }
-
-        // 2. Encontrar o crear la carpeta del expediente dentro de la carpeta del cliente
+        $rootFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA';
+        $clienteFolderId = findOrCreateFolder($this->googleDrive, $rootFolderId, 'cliente-' . $data['clientId']);
         $expedienteFolderName = 'expediente-' . $caseFileId;
-        $expedienteFolderId = findOrCreateFolder($service, $clienteFolderId, $expedienteFolderName);
-        if (!$expedienteFolderId) {
-            throw new \Exception("No se pudo crear la carpeta para el expediente " . $caseFileId . " en Google Drive.");
-        }
+        $expedienteFolderId = findOrCreateFolder($this->googleDrive, $clienteFolderId, $expedienteFolderName);
     } catch (\Exception $e) {
         error_log("ERROR Google Drive POST /case (creación de carpetas): " . $e->getMessage());
         $payload = ['error' => 'Error al crear carpetas en Google Drive: ' . $e->getMessage()];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
-    // --- Fin de la lógica de Google Drive para carpetas ---
 
     $caseFile = [
         'id' => $caseFileId,
@@ -90,6 +71,7 @@ $app->post('/case', function (Request $request, Response $response) {
         'description' => $data['description'] ?? '',
         'createdAt' => date('Y-m-d H:i:s'),
         'documents' => [],
+        'googleDriveFolderId' => $expedienteFolderId,
     ];
 
     $this->firebaseDb->getReference('expedientes/' . $caseFileId)->set($caseFile);
@@ -105,20 +87,18 @@ $app->post('/case', function (Request $request, Response $response) {
     return $response->withStatus(201)->withHeader('Content-Type', 'application/json');
 });
 
-// Obtener todos los expedientes
 $app->get('/cases', function (Request $request, Response $response) {
     $caseFiles = $this->firebaseDb->getReference('expedientes')->getValue() ?? [];
     $response->getBody()->write(json_encode(array_values($caseFiles)));
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// NUEVA RUTA: Obtener expedientes por ID de cliente
 $app->get('/cases/client/{clientId}', function (Request $request, Response $response, array $args) {
     $clientId = $args['clientId'];
     $allCaseFiles = $this->firebaseDb->getReference('expedientes')->getValue() ?? [];
 
-    $clientCases = [];  
-    foreach ($allCaseFiles as $caseFileId => $caseFile) {
+    $clientCases = [];
+    foreach ($allCaseFiles as $caseFile) {
         if (isset($caseFile['clientId']) && $caseFile['clientId'] === $clientId) {
             $clientCases[] = [
                 'id' => $caseFile['id'],
@@ -131,34 +111,25 @@ $app->get('/cases/client/{clientId}', function (Request $request, Response $resp
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// NUEVA RUTA: Obtener lista de documentos de un expediente desde Google Drive
 $app->get('/case/{id}/documents', function (Request $request, Response $response, array $args) {
-    $id = $args['id']; // ID del expediente
-
-    // 1. Obtener el expediente de Firebase para obtener el googleDriveFolderId
+    $id = $args['id'];
     $caseFile = $this->firebaseDb->getReference('expedientes/' . $id)->getValue();
-    if (!$caseFile) {
-        $payload = ['error' => 'Expediente no encontrado.'];
+
+    if (!$caseFile || !isset($caseFile['googleDriveFolderId'])) {
+        $payload = ['error' => 'Expediente o carpeta de Drive no encontrada.'];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
-    $expedienteFolderId = $caseFile['googleDriveFolderId'] ?? null;
-    if (!$expedienteFolderId) {
-        $payload = ['error' => 'No se encontró una carpeta de Google Drive asociada a este expediente.'];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-    }
-
-    // 2. Listar los archivos en esa carpeta de Google Drive
+    $folderId = $caseFile['googleDriveFolderId'];
     $driveDocuments = [];
+
     try {
-        $service = getGoogleDriveService();
-        $query = "'" . $expedienteFolderId . "' in parents and trashed=false";
-        $results = $service->files->listFiles([
+        $query = "'$folderId' in parents and trashed=false";
+        $results = $this->googleDrive->files->listFiles([
             'q' => $query,
             'spaces' => 'drive',
-            'fields' => 'files(id, name, mimeType, size)' // Obtener ID, nombre, tipo MIME y tamaño
+            'fields' => 'files(id, name, mimeType, size)'
         ]);
 
         foreach ($results->getFiles() as $file) {
@@ -166,12 +137,13 @@ $app->get('/case/{id}/documents', function (Request $request, Response $response
                 'id' => $file->getId(),
                 'name' => $file->getName(),
                 'mimeType' => $file->getMimeType(),
-                'size' => $file->getSize(), // Tamaño en bytes
+                'size' => $file->getSize(),
             ];
         }
+
     } catch (\Exception $e) {
         error_log("ERROR Google Drive GET /case/{id}/documents: " . $e->getMessage());
-        $payload = ['error' => 'Error al listar documentos de Google Drive: ' . $e->getMessage()];
+        $payload = ['error' => 'Error al listar documentos: ' . $e->getMessage()];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
@@ -180,27 +152,24 @@ $app->get('/case/{id}/documents', function (Request $request, Response $response
     return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
 });
 
-// Obtener expediente por ID
 $app->get('/case/{id}', function (Request $request, Response $response, $args) {
     $id = $args['id'];
     $caseFile = $this->firebaseDb->getReference('expedientes/' . $id)->getValue();
+
     if (!$caseFile) {
         $payload = ['error' => 'Expediente no encontrado'];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
-    // Asegurarse de que 'documents' es un array vacío o se elimina, ya que ahora se obtendrán de Drive
-    $caseFile['documents'] = [];
 
+    $caseFile['documents'] = [];
     $response->getBody()->write(json_encode($caseFile));
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// Actualizar expediente (ya no maneja subida de archivos)
 $app->post('/case/{id}', function (Request $request, Response $response, array $args) {
     $caseFileId = $args['id'];
     $data = $request->getParsedBody();
-    // Ya no necesitamos $files aquí para la actualización
 
     if (strtoupper($data['_method'] ?? '') !== 'PUT') {
         $payload = ['error' => 'Método no permitido. Usa POST con _method=PUT para actualizar.'];
@@ -239,36 +208,25 @@ $app->post('/case/{id}', function (Request $request, Response $response, array $
         return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 
-    // No se procesan archivos adjuntos aquí.
-    // Los documentos se gestionarán directamente en Google Drive.
-    $googleDriveFolderId = $existingCase['googleDriveFolderId'] ?? null; // Mantener el ID de la carpeta de Drive
+    $updatedCase = [
+        'id' => $caseFileId,
+        'clientId' => $data['clientId'],
+        'title' => $data['title'],
+        'subject' => $data['subject'],
+        'date' => $data['date'],
+        'place' => $data['place'],
+        'court' => $data['court'] ?? '',
+        'description' => $data['description'] ?? '',
+        'updatedAt' => date('Y-m-d H:i:s'),
+        'createdAt' => $existingCase['createdAt'] ?? date('Y-m-d H:i:s'),
+        'documents' => [],
+        'googleDriveFolderId' => $existingCase['googleDriveFolderId'] ?? null
+    ];
 
-    try {
-        $updatedCase = [
-            'id' => $caseFileId,
-            'clientId' => $data['clientId'],
-            'title' => $data['title'],
-            'subject' => $data['subject'],
-            'date' => $data['date'],
-            'place' => $data['place'],
-            'court' => $data['court'] ?? '',
-            'description' => $data['description'] ?? '',
-            'updatedAt' => date('Y-m-d H:i:s'),
-            'createdAt' => $existingCase['createdAt'] ?? date('Y-m-d H:i:s'),
-            'documents' => [], // Siempre vacío desde el backend, se obtienen de Drive
-            'googleDriveFolderId' => $googleDriveFolderId // Asegurarse de que el ID de la carpeta se mantenga
-        ];
-
-        $caseRef->set($updatedCase); // Usa set para sobrescribir y asegurar la estructura
-        $payload = ['message' => 'Expediente actualizado correctamente.'];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-    } catch (\Exception $e) {
-        error_log("Error al guardar expediente en Firebase (PUT): " . $e->getMessage());
-        $payload = ['error' => 'Error al guardar expediente: ' . $e->getMessage()];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
-    }
+    $caseRef->set($updatedCase);
+    $payload = ['message' => 'Expediente actualizado correctamente.'];
+    $response->getBody()->write(json_encode($payload));
+    return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
 });
 
 $app->delete('/case/{id}', function (Request $request, Response $response, $args) {
@@ -282,29 +240,18 @@ $app->delete('/case/{id}', function (Request $request, Response $response, $args
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
-    // --- Lógica para eliminar la carpeta de Drive asociada (y su contenido) ---
-    $expedienteFolderId = $existing['googleDriveFolderId'] ?? null;
-
-    if ($expedienteFolderId) {
+    $folderId = $existing['googleDriveFolderId'] ?? null;
+    if ($folderId) {
         try {
-            $service = getGoogleDriveService();
-            try {
-                $service->files->delete($expedienteFolderId);
-                error_log("Carpeta de Drive eliminada: " . $expedienteFolderId . " para expediente: " . $id);
-            } catch (\Google\Service\Exception $e) {
-                error_log("Error al eliminar carpeta de Drive $expedienteFolderId: " . $e->getMessage());
-                // Si la carpeta no está vacía, fallará. Se puede mejorar con lógica recursiva.
-            }
+            $this->googleDrive->files->delete($folderId);
+            error_log("Carpeta de Drive eliminada: $folderId para expediente: $id");
         } catch (\Exception $e) {
-            error_log("Error en autenticación Google Drive: " . $e->getMessage());
+            error_log("Error al eliminar carpeta de Drive $folderId para expediente $id: " . $e->getMessage());
         }
     }
-    // --- FIN lógica para eliminar carpeta de Drive ---
 
     $caseFileRef->remove();
-
     $payload = ['message' => 'Expediente eliminado exitosamente'];
     $response->getBody()->write(json_encode($payload));
     return $response->withHeader('Content-Type', 'application/json');
 });
-

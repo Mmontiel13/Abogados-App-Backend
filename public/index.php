@@ -1,25 +1,43 @@
 <?php
 require __DIR__ . '/../vendor/autoload.php';
 
+// // Cargar variables de entorno desde .env si existe
+// if (file_exists(__DIR__ . '/../.env')) {
+//     $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
+//     $dotenv->load();
+// }
+
 use Slim\App;
 use Kreait\Firebase\Factory;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-// use Slim\Middleware\ContentLengthMiddleware; // Comentado para evitar el error de clase no encontrada
+use Google\Client as GoogleClient;
+use Google\Service\Drive;
 
+$appEnv = $_ENV['APP_ENV'] ?? 'development';
+// Configuración de Slim
 $config = [
     'settings' => [
-        'displayErrorDetails' => false, // Para debug, poner false en producción
+        // --- MODIFICADO PARA RAILWAY ---
+        // displayErrorDetails debe ser false en producción. Lo hacemos condicional.
+        'displayErrorDetails' => $appEnv === 'development', // true para development, false para production
+        // --- FIN MODIFICADO PARA RAILWAY ---
     ],
 ];
-
-// Configuración adicional para Slim 3 para Content-Length Middleware
 $app = new App($config);
-$credentialsArray = json_decode($_ENV['GOOGLE_APPLICATION_CREDENTIALS_JSON'], true);
-// Crear instancia de Firebase
+
+// --- FIREBASE: Obtener credenciales desde variable de entorno ---
+$firebaseJson = $_ENV['FCREDENTIALS'] ?? null;
+if (!$firebaseJson) {
+    throw new \Exception("No se encontró la variable de entorno FCREDENTIALS");
+}
+
+$tempFirebasePath = tempnam(sys_get_temp_dir(), 'firebase_creds_');
+file_put_contents($tempFirebasePath, $firebaseJson);
+
 $firebase = (new Factory)
-    ->withServiceAccount($credentialsArray)
-    ->withDatabaseUri('https://calva-corro-bd-default-rtdb.firebaseio.com'); // URL correcta aquí
+    ->withServiceAccount($tempFirebasePath)
+    ->withDatabaseUri('https://calva-corro-bd-default-rtdb.firebaseio.com'); // <-- Puedes mover esto a variable también
 
 $firebaseDb = $firebase->createDatabase();
 
@@ -29,35 +47,52 @@ $container['firebaseDb'] = function() use ($firebaseDb) {
     return $firebaseDb;
 };
 
-// --- CRÍTICO: Incluir funciones auxiliares de Drive UNA SOLA VEZ ---
-require __DIR__ . '/../src/utils/drive_helpers.php'; // <--- ¡Esta línea debe estar aquí y solo una vez!
+// --- GOOGLE DRIVE: inicialización desde variable de entorno (si decides usarla aquí también) ---
+$container['googleDriveService'] = function () {
+    $credentialsJson = $_ENV['GCREDENTIALS'] ?? null;
+    if (!$credentialsJson) {
+        throw new \Exception("No se encontró la variable de entorno GCREDENTIALS");
+    }
 
-// --- CORS Middleware ---
-// Esto debe ir ANTES de cargar las rutas
+    $decoded = json_decode($credentialsJson, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        throw new \Exception("Error al decodificar GCREDENTIALS: " . json_last_error_msg());
+    }
+
+    $tempPath = tempnam(sys_get_temp_dir(), 'gdrive_');
+    file_put_contents($tempPath, json_encode($decoded));
+
+    $googleClient = new GoogleClient();
+    $googleClient->setAuthConfig($tempPath);
+    $googleClient->addScope(Drive::DRIVE_FILE);
+    $googleClient->fetchAccessTokenWithAssertion();
+
+    return new Drive($googleClient);
+};
+
+$allowedOrigin = $appEnv === 'development' ? 'http://localhost:3000' : 'https://cca-app.vercel.app';
+// --- CORS ---
 $app->options('/{routes:.+}', function (Request $request, Response $response) {
     // Maneja las solicitudes OPTIONS preflight.
-    // Simplemente devuelve una respuesta 200 OK con los encabezados CORS adecuados.
     return $response
-        ->withHeader('Access-Control-Allow-Origin', 'https://cca-app.vercel.app') // ¡CAMBIADO!
+        ->withHeader('Access-Control-Allow-Origin', $this->getContainer()->get('settings')['allowedOrigin']) // Usar el origen dinámico
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
 $app->add(function (Request $request, Response $response, $next) {
-    // Configura los encabezados CORS para permitir solicitudes desde cualquier origen
-    // En producción, deberías reemplazar '*' con el dominio específico de tu frontend.
     $response = $next($request, $response);
     return $response
-        ->withHeader('Access-Control-Allow-Origin', 'https://cca-app.vercel.app') // O tu dominio específico: 'http://localhost:3000'
+        ->withHeader('Access-Control-Allow-Origin', $this->getContainer()->get('settings')['allowedOrigin']) // Usar el origen dinámico
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
-// Middleware para Content-Length (opcional pero recomendado por Slim)
-// Si esta línea da error, significa que la clase no se encuentra. Es mejor comentarla
-// si no se ha podido instalar la dependencia 'slim/http-cache' correctamente.
-// $app->add(new ContentLengthMiddleware()); // Comentado para evitar errores de clase no encontrada
+// Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
+$container['settings']['allowedOrigin'] = $allowedOrigin;
 
+// Cargar funciones auxiliares
+require __DIR__ . '/../src/utils/drive_helpers.php';
 
 // Cargar rutas
 require __DIR__ . '/../src/cliente.php';

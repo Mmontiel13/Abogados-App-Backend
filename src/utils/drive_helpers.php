@@ -42,25 +42,4 @@ function findOrCreateFolder(Drive $service, string $parentFolderId, string $fold
     }
 }
 
-function getGoogleDriveService(): \Google\Service\Drive {
-    $googleClient = new \Google\Client();
-    $credentialsJson = $_ENV['GOOGLE_DRIVE_CREDENTIALS_JSON'] ?? null;
 
-    if (!$credentialsJson) {
-        throw new \Exception("No se encontró la variable de entorno GOOGLE_DRIVE_CREDENTIALS_JSON");
-    }
-
-    $credentialsArray = json_decode($credentialsJson, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        throw new \Exception("Error al decodificar las credenciales JSON: " . json_last_error_msg());
-    }
-
-    $tempCredentialsPath = tempnam(sys_get_temp_dir(), 'google_creds_');
-    file_put_contents($tempCredentialsPath, json_encode($credentialsArray));
-
-    $googleClient->setAuthConfig($tempCredentialsPath);
-    $googleClient->addScope(\Google\Service\Drive::DRIVE_FILE);
-    $googleClient->fetchAccessTokenWithAssertion();
-
-    return new \Google\Service\Drive($googleClient);
-}

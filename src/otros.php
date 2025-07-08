@@ -2,19 +2,12 @@
 
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-use Google\Client;
-use Google\Service\Drive;
-use Google\Service\Drive\DriveFile;
 use Slim\Http\UploadedFile;
 
-require '../vendor/autoload.php';
-
-// Ruta POST para crear un nuevo archivo "Otro"
+// POST: Crear nuevo archivo "Otro"
 $app->post('/other', function (Request $request, Response $response) {
     $data = $request->getParsedBody();
-    // Archivos ya no se suben directamente en la creación
 
-    // Validar campos obligatorios: title, type, description
     $requiredFields = ['title', 'type', 'description'];
     foreach ($requiredFields as $field) {
         if (empty($data[$field])) {
@@ -24,54 +17,34 @@ $app->post('/other', function (Request $request, Response $response) {
         }
     }
 
-    // Validación de duplicados
     $existingOthers = $this->firebaseDb->getReference('otros')->getValue() ?? [];
-    foreach ($existingOthers as $otherKey => $existingOther) {
-        $existingTitle = strtolower(trim($existingOther['title'] ?? ''));
-        $existingType = strtolower(trim($existingOther['type'] ?? ''));
-        $newTitle = strtolower(trim($data['title']));
-        $newType = strtolower(trim($data['type']));
-
-        if ($existingTitle === $newTitle && $existingType === $newType) {
+    foreach ($existingOthers as $key => $item) {
+        if (
+            strtolower(trim($item['title'] ?? '')) === strtolower(trim($data['title'])) &&
+            strtolower(trim($item['type'] ?? '')) === strtolower(trim($data['type']))
+        ) {
             $payload = ['error' => 'Ya existe un archivo "Otro" con el mismo título y tipo.'];
             $response->getBody()->write(json_encode($payload));
             return $response->withStatus(409)->withHeader('Content-Type', 'application/json');
         }
     }
 
-    // Generar nuevo ID para el archivo "Otro"
     $counterRef = $this->firebaseDb->getReference('contadores/otro');
     $counter = $counterRef->getValue() ?? 0;
     $newCounter = $counter + 1;
     $otherFileId = sprintf("DOC-%03d", $newCounter);
 
-    // --- Lógica de Google Drive API para crear carpetas ---
-    $otherSpecificFolderId = null;
     try {
-        $service = getGoogleDriveService();
-        $myPersonalDataFilesFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA'; // Tu ID de carpeta raíz
-
-        // Sub-carpeta específica para "Otros archivos" dentro de DataFiles
-        $othersMainFolderId = findOrCreateFolder($service, $myPersonalDataFilesFolderId, 'OtrosArchivos');
-        if (!$othersMainFolderId) {
-            throw new \Exception("No se pudo crear la carpeta 'OtrosArchivos' en Google Drive.");
-        }
-
-        // Carpeta para este archivo "Otro" específico (usando el ID generado)
-        $otherSpecificFolderName = $data['title'];
-        $otherSpecificFolderId = findOrCreateFolder($service, $othersMainFolderId, $otherSpecificFolderName);
-        if (!$otherSpecificFolderId) {
-            throw new \Exception("No se pudo crear la carpeta para el archivo 'Otro' con ID " . $otherFileId . " en Google Drive.");
-        }
-
+        $rootFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA';
+        $mainFolderId = findOrCreateFolder($this->googleDrive, $rootFolderId, 'OtrosArchivos');
+        $folderId = findOrCreateFolder($this->googleDrive, $mainFolderId, $data['title']);
     } catch (\Exception $e) {
-        error_log("ERROR Google Drive POST /other (creación de carpetas): " . $e->getMessage());
+        error_log("ERROR Google Drive POST /other: " . $e->getMessage());
         $payload = ['error' => 'Error al crear carpetas en Google Drive: ' . $e->getMessage()];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
-    // --- Fin de la lógica de Google Drive para carpetas ---
-    // Preparar los datos del archivo "Otro" para Firebase
+
     $otherFile = [
         'id' => $otherFileId,
         'title' => $data['title'],
@@ -87,112 +60,93 @@ $app->post('/other', function (Request $request, Response $response) {
         'notes' => $data['notes'] ?? '',
         'dateAdded' => $data['date'] ?? date('Y-m-d'),
         'createdAt' => date('Y-m-d H:i:s'),
-        'documents' => [], // Siempre vacío, los documentos se gestionan en Drive
-        'googleDriveFolderId' => $otherSpecificFolderId, // Guardar el ID de la carpeta de Drive
+        'documents' => [],
+        'googleDriveFolderId' => $folderId,
     ];
 
-    // Guardar el nuevo archivo "Otro" en Firebase
     $this->firebaseDb->getReference('otros/' . $otherFileId)->set($otherFile);
     $counterRef->set($newCounter);
 
     $payload = [
-        'message' => 'Archivo "Otro" creado exitosamente. Ahora puedes subir documentos en la sección de edición.',
+        'message' => 'Archivo "Otro" creado exitosamente.',
         'id' => $otherFileId,
         'otherFile' => $otherFile,
-        'googleDriveFolderId' => $otherSpecificFolderId,
+        'googleDriveFolderId' => $folderId,
     ];
 
     $response->getBody()->write(json_encode($payload));
     return $response->withStatus(201)->withHeader('Content-Type', 'application/json');
 });
 
-// Ruta GET para obtener todos los archivos "Otros"
+// GET: Obtener todos los archivos "Otros"
 $app->get('/others', function (Request $request, Response $response) {
-    $otherFiles = $this->firebaseDb->getReference('otros')->getValue() ?? [];
-    $response->getBody()->write(json_encode(array_values($otherFiles)));
+    $others = $this->firebaseDb->getReference('otros')->getValue() ?? [];
+    $response->getBody()->write(json_encode(array_values($others)));
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// NUEVA RUTA: Obtener lista de documentos de un archivo "Otro" desde Google Drive
+// GET: Obtener un archivo "Otro" por ID
+$app->get('/other/{id}', function (Request $request, Response $response, array $args) {
+    $id = $args['id'];
+    $data = $this->firebaseDb->getReference('otros/' . $id)->getValue();
+    if (!$data) {
+        $payload = ['error' => 'Archivo "Otro" no encontrado'];
+        $response->getBody()->write(json_encode($payload));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+    }
+    $data['documents'] = [];
+    $response->getBody()->write(json_encode($data));
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+// GET: Obtener documentos del archivo "Otro"
 $app->get('/other/{id}/documents', function (Request $request, Response $response, array $args) {
-    $id = $args['id']; // ID del archivo "Otro"
-
-    // 1. Obtener el archivo "Otro" de Firebase para obtener el googleDriveFolderId
-    $otherFile = $this->firebaseDb->getReference('otros/' . $id)->getValue();
-    if (!$otherFile) {
-        $payload = ['error' => 'Archivo "Otro" no encontrado.'];
+    $id = $args['id'];
+    $data = $this->firebaseDb->getReference('otros/' . $id)->getValue();
+    if (!$data || !isset($data['googleDriveFolderId'])) {
+        $payload = ['error' => 'Archivo "Otro" o carpeta no encontrada.'];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
-    $otherFolderId = $otherFile['googleDriveFolderId'] ?? null;
-    if (!$otherFolderId) {
-        $payload = ['error' => 'No se encontró una carpeta de Google Drive asociada a este archivo "Otro".'];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-    }
-
-    // 2. Listar los archivos en esa carpeta de Google Drive
-    $driveDocuments = [];
     try {
-        $service = getGoogleDriveService();
-        $query = "'" . $otherFolderId . "' in parents and trashed=false";
-        $results = $service->files->listFiles([
+        $query = "'{$data['googleDriveFolderId']}' in parents and trashed=false";
+        $results = $this->googleDrive->files->listFiles([
             'q' => $query,
             'spaces' => 'drive',
             'fields' => 'files(id, name, mimeType, size)'
         ]);
 
+        $files = [];
         foreach ($results->getFiles() as $file) {
-            $driveDocuments[] = [
+            $files[] = [
                 'id' => $file->getId(),
                 'name' => $file->getName(),
                 'mimeType' => $file->getMimeType(),
                 'size' => $file->getSize(),
             ];
         }
-
+        $response->getBody()->write(json_encode($files));
+        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     } catch (\Exception $e) {
         error_log("ERROR Google Drive GET /other/{id}/documents: " . $e->getMessage());
-        $payload = ['error' => 'Error al listar documentos de Google Drive: ' . $e->getMessage()];
+        $payload = ['error' => 'Error al listar documentos: ' . $e->getMessage()];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
-
-    $response->getBody()->write(json_encode($driveDocuments));
-    return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
 });
 
-// Ruta GET para obtener un archivo "Otro" por ID
-$app->get('/other/{id}', function (Request $request, Response $response, $args) {
-    $id = $args['id'];
-    $otherFile = $this->firebaseDb->getReference('otros/' . $id)->getValue();
-    if (!$otherFile) {
-        $payload = ['error' => 'Archivo "Otro" no encontrado'];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-    }
-    if (isset($otherFile['tags']) && is_string($otherFile['tags'])) {
-        $otherFile['tags'] = array_map('trim', explode(',', $otherFile['tags']));
-    }
-    // Asegurarse de que 'documents' es un array vacío
-    $otherFile['documents'] = []; 
-
-    $response->getBody()->write(json_encode($otherFile));
-    return $response->withHeader('Content-Type', 'application/json');
-});
-
+// POST con _method=PUT: Actualizar archivo "Otro"
 $app->post('/other/{id}', function (Request $request, Response $response, array $args) {
     $id = $args['id'];
     $data = $request->getParsedBody();
 
     if (strtoupper($data['_method'] ?? '') !== 'PUT') {
-        $payload = ['error' => 'Método no permitido. Usa POST con _method=PUT para actualizar.'];
+        $payload = ['error' => 'Método no permitido. Usa POST con _method=PUT.'];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(405)->withHeader('Content-Type', 'application/json');
     }
 
-    // Validar campos obligatorios
     $requiredFields = ['title', 'type', 'description'];
     foreach ($requiredFields as $field) {
         if (empty($data[$field])) {
@@ -202,37 +156,28 @@ $app->post('/other/{id}', function (Request $request, Response $response, array 
         }
     }
 
-    // Obtener el archivo existente
-    $otherFileRef = $this->firebaseDb->getReference('otros/' . $id);
-    $existing = $otherFileRef->getValue();
+    $ref = $this->firebaseDb->getReference('otros/' . $id);
+    $existing = $ref->getValue();
     if (!$existing) {
         $payload = ['error' => 'Archivo "Otro" no encontrado.'];
         $response->getBody()->write(json_encode($payload));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
-    // Validación de duplicados (mismo título y tipo)
-    $newTitle = strtolower(trim($data['title']));
-    $newType = strtolower(trim($data['type']));
-
-    $existingOthers = $this->firebaseDb->getReference('otros')->getValue() ?? [];
-    foreach ($existingOthers as $otherKey => $existingOther) {
-        if ($otherKey === $id) continue;
-        $existingTitle = strtolower(trim($existingOther['title'] ?? ''));
-        $existingType = strtolower(trim($existingOther['type'] ?? ''));
-        if ($existingTitle === $newTitle && $existingType === $newType) {
+    $others = $this->firebaseDb->getReference('otros')->getValue() ?? [];
+    foreach ($others as $key => $item) {
+        if ($key === $id) continue;
+        if (
+            strtolower(trim($item['title'] ?? '')) === strtolower(trim($data['title'])) &&
+            strtolower(trim($item['type'] ?? '')) === strtolower(trim($data['type']))
+        ) {
             $payload = ['error' => 'Ya existe otro archivo con el mismo título y tipo.'];
             $response->getBody()->write(json_encode($payload));
             return $response->withStatus(409)->withHeader('Content-Type', 'application/json');
         }
     }
 
-    // Mantener carpeta de Google Drive
-    $googleDriveFolderId = $existing['googleDriveFolderId'] ?? null;
-
-    // Actualizar datos
-    $updateData = [
-        'id' => $id,
+    $update = array_merge($existing, [
         'title' => $data['title'],
         'type' => $data['type'],
         'description' => $data['description'],
@@ -245,38 +190,24 @@ $app->post('/other/{id}', function (Request $request, Response $response, array 
         'notes' => $data['notes'] ?? $existing['notes'] ?? '',
         'dateAdded' => $data['date'] ?? $existing['dateAdded'] ?? date('Y-m-d'),
         'updatedAt' => date('Y-m-d H:i:s'),
-        'createdAt' => $existing['createdAt'] ?? date('Y-m-d H:i:s'),
-        'documents' => [], // Siempre vacío
-        'googleDriveFolderId' => $googleDriveFolderId,
-    ];
+    ]);
 
     if (isset($data['tags'])) {
         $tags = is_array($data['tags']) ? $data['tags'] : explode(',', $data['tags']);
-        $updateData['tags'] = array_filter(array_map('trim', $tags));
-    } else {
-        $updateData['tags'] = $existing['tags'] ?? [];
+        $update['tags'] = array_filter(array_map('trim', $tags));
     }
 
-    // Guardar en Firebase
-    try {
-        $otherFileRef->set($updateData);
-        $payload = ['message' => 'Archivo "Otro" actualizado correctamente.'];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-    } catch (\Exception $e) {
-        error_log("Error al guardar archivo 'Otro': " . $e->getMessage());
-        $payload = ['error' => 'Error al guardar: ' . $e->getMessage()];
-        $response->getBody()->write(json_encode($payload));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
-    }
+    $ref->set($update);
+    $payload = ['message' => 'Archivo "Otro" actualizado correctamente.'];
+    $response->getBody()->write(json_encode($payload));
+    return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
 });
 
-
-// Ruta DELETE para eliminar un archivo "Otro"
-$app->delete('/other/{id}', function (Request $request, Response $response, $args) {
+// DELETE: Eliminar archivo "Otro"
+$app->delete('/other/{id}', function (Request $request, Response $response, array $args) {
     $id = $args['id'];
-    $otherFileRef = $this->firebaseDb->getReference('otros/' . $id);
-    $existing = $otherFileRef->getValue();
+    $ref = $this->firebaseDb->getReference('otros/' . $id);
+    $existing = $ref->getValue();
 
     if (!$existing) {
         $payload = ['error' => 'Archivo "Otro" no encontrado'];
@@ -284,32 +215,18 @@ $app->delete('/other/{id}', function (Request $request, Response $response, $arg
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
-    // --- Lógica para eliminar la carpeta de Drive asociada (y su contenido) ---
-    $otherFolderId = $existing['googleDriveFolderId'] ?? null;
-
-    if ($otherFolderId) {
+    $folderId = $existing['googleDriveFolderId'] ?? null;
+    if ($folderId) {
         try {
-            $service = getGoogleDriveService(); // Usamos la función del archivo utils.php
-
-            try {
-                // Eliminar la carpeta del archivo "Otro" de Google Drive
-                $service->files->delete($otherFolderId);
-                error_log("Carpeta de Drive eliminada: " . $otherFolderId . " para archivo 'Otro': " . $id);
-            } catch (\Google\Service\Exception $e) {
-                error_log("Error al eliminar carpeta de Drive " . $otherFolderId . " para archivo 'Otro' " . $id . ": " . $e->getMessage());
-                // Esto suele ocurrir si la carpeta no está vacía.
-            }
-
+            $this->googleDrive->files->delete($folderId);
+            error_log("Carpeta de Drive eliminada: $folderId para archivo Otro: $id");
         } catch (\Exception $e) {
-            error_log("Error fatal en la inicialización/autenticación de Google Drive para eliminación de archivo 'Otro' " . $id . ": " . $e->getMessage());
+            error_log("ERROR al eliminar carpeta Drive $folderId para archivo Otro $id: " . $e->getMessage());
         }
     }
-    // --- FIN Lógica para eliminar la carpeta de Drive asociada ---
 
-    $otherFileRef->remove();
-
+    $ref->remove();
     $payload = ['message' => 'Archivo "Otro" eliminado exitosamente'];
     $response->getBody()->write(json_encode($payload));
     return $response->withHeader('Content-Type', 'application/json');
 });
-
