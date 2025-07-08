@@ -4,6 +4,8 @@ use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 // Se eliminó la importación de StreamFactory, ya que no se usa directamente en Slim 3 para esto.
 
+file_put_contents('debug.log', "usuario.php cargado\n", FILE_APPEND);
+
 // Obtener todos los usuarios no eliminados
 $app->get('/usuarios', function (Request $request, Response $response) {
     $usuarios = $this->firebaseDb->getReference('usuarios')->getValue() ?? [];
@@ -167,22 +169,55 @@ $app->put('/usuario/{id}', function (Request $request, Response $response, $args
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// --- RUTA PARA LOGIN (SIMPLIFICADA PARA DEPURACIÓN) ---
+// --- RUTA PARA LOGIN ---
 $app->post('/login', function (Request $request, Response $response) {
-    // error_log("DEBUG: POST /login request received."); // Puedes dejarlo o quitarlo
-
-    // --- DEBUG: Log del cuerpo parseado (para ver si Slim lo recibe) ---
     $data = $request->getParsedBody();
-    error_log("DEBUG: Parsed Body for /login (SIMPLIFICADO): " . json_encode($data));
-    // --- FIN DEBUG ---
+    $email = $data['email'] ?? '';
+    $password = $data['password'] ?? '';
 
-    // Simplemente devuelve una respuesta exitosa para probar si la ruta se alcanza
-    $payload = [
-        'message' => 'Ruta /login alcanzada y funcionando (DEBUG).',
-        'received_data' => $data // Muestra los datos recibidos
-    ];
-    $response->getBody()->write(json_encode($payload));
-    return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+    // Validar que email y password no estén vacíos
+    if (empty(trim($email)) || empty(trim($password))) {
+        $payload = ['error' => 'Correo electrónico y contraseña son obligatorios.'];
+        $response->getBody()->write(json_encode($payload));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    $usuarios = $this->firebaseDb->getReference('usuarios')->getValue() ?? [];
+    $foundUser = null;
+
+    // Buscar el usuario por email
+    foreach ($usuarios as $usuario) {
+        if (isset($usuario['email']) && strtolower(trim($usuario['email'])) === strtolower(trim($email))) {
+            $foundUser = $usuario;
+            break;
+        }
+    }
+
+    if (!$foundUser || ($foundUser['deleted'] ?? false)) {
+        // Usuario no encontrado o está marcado como eliminado
+        $payload = ['error' => 'Usuario no habilitado.'];
+        $response->getBody()->write(json_encode($payload));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json'); // 401 Unauthorized
+    }
+
+    // Verificar la contraseña hasheada
+    if (password_verify($password, $foundUser['password'])) {
+        // Login exitoso
+        $userResponse = $foundUser;
+        unset($userResponse['password']); // No enviar el hash de la contraseña al frontend
+
+        $payload = [
+            'message' => 'Inicio de sesión exitoso.',
+            'user' => $userResponse
+        ];
+        $response->getBody()->write(json_encode($payload));
+        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+    } else {
+        // Contraseña incorrecta
+        $payload = ['error' => 'Credenciales inválidas.'];
+        $response->getBody()->write(json_encode($payload));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json'); // 401 Unauthorized
+    }
 });
 
 // Borrado lógico

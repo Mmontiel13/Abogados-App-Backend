@@ -125,6 +125,7 @@ $app->get('/', function (Request $request, Response $response) {
 });
 // --- FIN RUTA DE PRUEBA SIMPLE ---
 
+global $app;
 // Cargar funciones auxiliares
 require __DIR__ . '/../src/utils/drive_helpers.php';
 
