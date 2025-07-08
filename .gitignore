@@ -5,8 +5,11 @@ dist/
 .env
 
 # --- BACKEND (PHP / Slim) ---
-vendor/
+# vendor/
 .env
+credentials.json
+credentials-google.json
+credencialesPasadas.json
 
 # --- ARCHIVOS SENSIBLES ---
 .DS_Store
