@@ -4,8 +4,6 @@ use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 // Se eliminó la importación de StreamFactory, ya que no se usa directamente en Slim 3 para esto.
 
-file_put_contents('debug.log', "usuario.php cargado\n", FILE_APPEND);
-
 // Obtener todos los usuarios no eliminados
 $app->get('/usuarios', function (Request $request, Response $response) {
     $usuarios = $this->firebaseDb->getReference('usuarios')->getValue() ?? [];

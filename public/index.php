@@ -1,13 +1,6 @@
 <?php
-// Habilitar la visualización de todos los errores de PHP para depuración local
-// Estas líneas son útiles para desarrollo, pero Railway las gestiona de forma diferente.
-// Las mantendremos aquí por si las usas para un entorno de staging local antes de Railway.
-// error_reporting(E_ALL); // Comentado para no mostrar todas las advertencias en Railway
-// ini_set('display_errors', 1); // Comentado
+require __DIR__ . '/../vendor/autoload.php';
 
-// --- MODIFICADO PARA SUPRIMIR ADVERTENCIAS EN PRODUCCIÓN ---
-// En producción (Railway), no queremos que las advertencias de "Deprecated" rompan la aplicación.
-// Solo mostraremos errores graves.
 if (($_ENV['APP_ENV'] ?? 'development') === 'production') {
     error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE); // Ignorar advertencias y notices
     ini_set('display_errors', 0); // No mostrar errores en la salida (se irán a los logs)
@@ -18,18 +11,6 @@ if (($_ENV['APP_ENV'] ?? 'development') === 'production') {
     ini_set('display_errors', 1);
     ini_set('log_errors', 0);
 }
-// --- FIN MODIFICADO ---
-
-require __DIR__ . '/../vendor/autoload.php';
-
-// Eliminar o comentar la carga de variables de entorno desde .env,
-// ya que Railway inyecta las variables directamente.
-/*
-if (file_exists(__DIR__ . '/../.env')) {
-    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
-    $dotenv->load();
-}
-*/
 
 use Slim\App;
 use Kreait\Firebase\Factory;
@@ -39,16 +20,16 @@ use Google\Client as GoogleClient;
 use Google\Service\Drive;
 
 $appEnv = $_ENV['APP_ENV'] ?? 'development';
-
+// Configuración de Slim
 $config = [
     'settings' => [
+        // --- MODIFICADO PARA RAILWAY ---
+        // displayErrorDetails debe ser false en producción. Lo hacemos condicional.
         'displayErrorDetails' => $appEnv === 'development', // true para development, false para production
+        // --- FIN MODIFICADO PARA RAILWAY ---
     ],
 ];
 $app = new App($config);
-
-// Obtener el contenedor de Slim
-$container = $app->getContainer(); // <--- OBTENEMOS EL CONTENEDOR AQUÍ
 
 // --- FIREBASE: Obtener credenciales desde variable de entorno ---
 $firebaseJson = $_ENV['FCREDENTIALS'] ?? null;
@@ -61,17 +42,18 @@ file_put_contents($tempFirebasePath, $firebaseJson);
 
 $firebase = (new Factory)
     ->withServiceAccount($tempFirebasePath)
-    ->withDatabaseUri($_ENV['FIREBASE_DATABASE_URI'] ?? 'https://calva-corro-bd-default-rtdb.firebaseio.com');
+    ->withDatabaseUri('https://calva-corro-bd-default-rtdb.firebaseio.com'); // <-- Puedes mover esto a variable también
 
 $firebaseDb = $firebase->createDatabase();
 
 // Registrar Firebase en el contenedor
+$container = $app->getContainer();
 $container['firebaseDb'] = function() use ($firebaseDb) {
     return $firebaseDb;
 };
 
-// --- GOOGLE DRIVE: inicialización desde variable de entorno ---
-$container['googleDriveService'] = function () use ($container) { // <--- AÑADIDO: use ($container)
+// --- GOOGLE DRIVE: inicialización desde variable de entorno (si decides usarla aquí también) ---
+$container['googleDriveService'] = function () {
     $credentialsJson = $_ENV['GCREDENTIALS'] ?? null;
     if (!$credentialsJson) {
         throw new \Exception("No se encontró la variable de entorno GCREDENTIALS");
@@ -94,29 +76,25 @@ $container['googleDriveService'] = function () use ($container) { // <--- AÑADI
 };
 
 $allowedOrigin = $appEnv === 'development' ? 'http://localhost:3000' : 'https://cca-app.vercel.app';
-
-// Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
-$container['settings']['allowedOrigin'] = $allowedOrigin; // <--- ESTA LÍNEA YA ESTABA CORRECTA
-
 // --- CORS ---
-// MODIFICADO: Inyectar el contenedor en el Closure de la ruta OPTIONS
-$app->options('/{routes:.+}', function (Request $request, Response $response) use ($container) { // <--- AÑADIDO: use ($container)
+$app->options('/{routes:.+}', function (Request $request, Response $response) {
     // Maneja las solicitudes OPTIONS preflight.
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
+        ->withHeader('Access-Control-Allow-Origin', $this->getContainer()->get('settings')['allowedOrigin']) // Usar el origen dinámico
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
-// MODIFICADO: Inyectar el contenedor en el Closure del middleware CORS
-$app->add(function (Request $request, Response $response, $next) use ($container) { // <--- AÑADIDO: use ($container)
+$app->add(function (Request $request, Response $response, $next) {
     $response = $next($request, $response);
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
+        ->withHeader('Access-Control-Allow-Origin', $this->getContainer()->get('settings')['allowedOrigin']) // Usar el origen dinámico
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
+// Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
+$container['settings']['allowedOrigin'] = $allowedOrigin;
 
 // --- RUTA DE PRUEBA SIMPLE ---
 $app->get('/', function (Request $request, Response $response) {
@@ -125,7 +103,6 @@ $app->get('/', function (Request $request, Response $response) {
 });
 // --- FIN RUTA DE PRUEBA SIMPLE ---
 
-global $app;
 // Cargar funciones auxiliares
 require __DIR__ . '/../src/utils/drive_helpers.php';
 
