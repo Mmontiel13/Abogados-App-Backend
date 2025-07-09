@@ -36,8 +36,8 @@ $app->post('/other', function (Request $request, Response $response) {
 
     try {
         $rootFolderId = '1b4-38SH6FYJj0dnwVNFEqc7dXm8Jz9br';
-        $mainFolderId = findOrCreateFolder($this->googleDrive, $rootFolderId, 'OtrosArchivos');
-        $folderId = findOrCreateFolder($this->googleDrive, $mainFolderId, $data['title']);
+        $mainFolderId = findOrCreateFolder($this->googleDriveService, $rootFolderId, 'OtrosArchivos');
+        $folderId = findOrCreateFolder($this->googleDriveService, $mainFolderId, $data['title']);
     } catch (\Exception $e) {
         error_log("ERROR Google Drive POST /other: " . $e->getMessage());
         $payload = ['error' => 'Error al crear carpetas en Google Drive: ' . $e->getMessage()];
@@ -107,7 +107,7 @@ $app->get('/other/{id}/documents', function (Request $request, Response $respons
 
     try {
         $query = "'{$data['googleDriveFolderId']}' in parents and trashed=false";
-        $results = $this->googleDrive->files->listFiles([
+        $results = $this->googleDriveService->files->listFiles([
             'q' => $query,
             'spaces' => 'drive',
             'fields' => 'files(id, name, mimeType, size)'
@@ -210,7 +210,7 @@ $app->delete('/other/{id}', function (Request $request, Response $response, arra
     $folderId = $existing['googleDriveFolderId'] ?? null;
     if ($folderId) {
         try {
-            $this->googleDrive->files->delete($folderId);
+            $this->googleDriveService->files->delete($folderId);
             error_log("Carpeta de Drive eliminada: $folderId para archivo Otro: $id");
         } catch (\Exception $e) {
             error_log("ERROR al eliminar carpeta Drive $folderId para archivo Otro $id: " . $e->getMessage());
