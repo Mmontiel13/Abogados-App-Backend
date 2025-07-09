@@ -103,7 +103,7 @@ $container['settings']['allowedOrigin'] = $allowedOrigin; // <--- ESTA LÍNEA YA
 $app->options('/{routes:.+}', function (Request $request, Response $response) use ($container) { // <--- AÑADIDO: use ($container)
     // Maneja las solicitudes OPTIONS preflight.
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
+        ->withHeader('Access-Control-Allow-Origin', '*')
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
@@ -112,7 +112,7 @@ $app->options('/{routes:.+}', function (Request $request, Response $response) us
 $app->add(function (Request $request, Response $response, $next) use ($container) { // <--- AÑADIDO: use ($container)
     $response = $next($request, $response);
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
+        ->withHeader('Access-Control-Allow-Origin', '*')
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
