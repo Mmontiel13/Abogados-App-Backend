@@ -15,8 +15,8 @@ if (($_ENV['APP_ENV'] ?? 'development') === 'production') {
 } else {
     // Para desarrollo local, mostrar todos los errores
     error_reporting(E_ALL);
-    ini_set('display_errors', 1);
-    ini_set('log_errors', 0);
+    ini_set('display_errors', 0);
+    ini_set('log_errors', 1);
 }
 // --- FIN MODIFICADO ---
 
