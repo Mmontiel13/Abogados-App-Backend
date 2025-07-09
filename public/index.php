@@ -93,26 +93,55 @@ $container['googleDriveService'] = function () use ($container) { // <--- AÑADI
     return new Drive($googleClient);
 };
 
-$allowedOrigin = $appEnv === 'development' ? 'http://localhost:3000' : 'https://calva-corro-system.vercel.app/';
+// $allowedOrigin = $appEnv === 'development' ? 'http://localhost:3000' : 'https://calva-corro-system.vercel.app';
 
-// Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
-$container['settings']['allowedOrigin'] = $allowedOrigin; // <--- ESTA LÍNEA YA ESTABA CORRECTA
+// // Registrar allowedOrigin en el contenedor para que sea accesible en el middleware CORS
+// $container['settings']['allowedOrigin'] = $allowedOrigin; // <--- ESTA LÍNEA YA ESTABA CORRECTA
+
+$allowedOrigins = [
+    'https://calva-corro-system.vercel.app', // Tu dominio principal de Vercel
+    'https://calva-corro-system-8f1vj9lxk-lucasmontiel358-4941s-projects.vercel.app', // El subdominio específico de tu despliegue actual
+];
+
+// Añadir localhost solo si estás en desarrollo
+$appEnv = $_ENV['APP_ENV'] ?? 'development';
+if ($appEnv === 'development') {
+    $allowedOrigins[] = 'http://localhost:3000';
+}
 
 // --- CORS ---
-// MODIFICADO: Inyectar el contenedor en el Closure de la ruta OPTIONS
-$app->options('/{routes:.+}', function (Request $request, Response $response) use ($container) { // <--- AÑADIDO: use ($container)
-    // Maneja las solicitudes OPTIONS preflight.
+// AHORA MODIFICAMOS EL MIDDLEWARE Y LA RUTA OPTIONS PARA USAR ESTA LISTA
+
+// MODIFICADO: Inyectar el contenedor Y la lista de orígenes permitidos
+$app->options('/{routes:.+}', function (Request $request, Response $response) use ($container, $allowedOrigins) {
+    $origin = $request->getHeaderLine('Origin'); // Obtener el origen de la solicitud
+    
+    // Verificar si el origen de la solicitud está en nuestra lista de orígenes permitidos
+    if (in_array($origin, $allowedOrigins)) {
+        return $response
+            ->withHeader('Access-Control-Allow-Origin', $origin) // Responder con el origen que hizo la solicitud (si está permitido)
+            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
+            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    }
+    // Si el origen no está en la lista, no incluir Access-Control-Allow-Origin para que el navegador lo bloquee.
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
 
-// MODIFICADO: Inyectar el contenedor en el Closure del middleware CORS
-$app->add(function (Request $request, Response $response, $next) use ($container) { // <--- AÑADIDO: use ($container)
+// MODIFICADO: Inyectar el contenedor Y la lista de orígenes permitidos
+$app->add(function (Request $request, Response $response, $next) use ($container, $allowedOrigins) {
     $response = $next($request, $response);
+    
+    $origin = $request->getHeaderLine('Origin');
+    if (in_array($origin, $allowedOrigins)) {
+        return $response
+            ->withHeader('Access-Control-Allow-Origin', $origin)
+            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
+            ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    }
+    
     return $response
-        ->withHeader('Access-Control-Allow-Origin', $container->get('settings')['allowedOrigin']) // <--- MODIFICADO: $container->get()
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
         ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 });
