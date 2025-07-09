@@ -49,7 +49,7 @@ $app->post('/case', function (Request $request, Response $response) {
     $caseFileId = sprintf("EXP-%03d", $newCounter);
 
     try {
-        $rootFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA';
+        $rootFolderId = '1b4-38SH6FYJj0dnwVNFEqc7dXm8Jz9br';
         $clienteFolderId = findOrCreateFolder($this->googleDrive, $rootFolderId, 'cliente-' . $data['clientId']);
         $expedienteFolderName = 'expediente-' . $caseFileId;
         $expedienteFolderId = findOrCreateFolder($this->googleDrive, $clienteFolderId, $expedienteFolderName);

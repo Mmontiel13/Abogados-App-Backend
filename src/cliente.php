@@ -7,7 +7,7 @@ $app->post('/cliente', function (Request $request, Response $response, array $ar
     $data = $request->getParsedBody();
 
     // Validar campos obligatorios al crear un cliente (solo nombre, email, teléfono)
-    $requiredFields = ['name', 'email', 'phone']; 
+    $requiredFields = ['name']; 
     foreach ($requiredFields as $field) {
         if (!isset($data[$field]) || trim($data[$field]) === '') {
             $payload = ['error' => "El campo '$field' es obligatorio."];

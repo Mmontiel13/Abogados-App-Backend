@@ -35,7 +35,7 @@ $app->post('/other', function (Request $request, Response $response) {
     $otherFileId = sprintf("DOC-%03d", $newCounter);
 
     try {
-        $rootFolderId = '1Xdb39qfZIbdPLQdg7xfh353QVeI7eQCA';
+        $rootFolderId = '1b4-38SH6FYJj0dnwVNFEqc7dXm8Jz9br';
         $mainFolderId = findOrCreateFolder($this->googleDrive, $rootFolderId, 'OtrosArchivos');
         $folderId = findOrCreateFolder($this->googleDrive, $mainFolderId, $data['title']);
     } catch (\Exception $e) {
@@ -52,11 +52,7 @@ $app->post('/other', function (Request $request, Response $response) {
         'description' => $data['description'],
         'author' => $data['author'] ?? '',
         'tags' => isset($data['tags']) ? array_map('trim', explode(',', $data['tags'])) : [],
-        'source' => $data['source'] ?? '',
-        'jurisdiction' => $data['jurisdiction'] ?? '',
-        'court' => $data['court'] ?? '',
-        'caseNumber' => $data['caseNumber'] ?? '',
-        'year' => $data['year'] ?? '',
+        // Eliminados: 'source', 'jurisdiction', 'court', 'caseNumber', 'year'
         'notes' => $data['notes'] ?? '',
         'dateAdded' => $data['date'] ?? date('Y-m-d'),
         'createdAt' => date('Y-m-d H:i:s'),
@@ -182,11 +178,7 @@ $app->post('/other/{id}', function (Request $request, Response $response, array 
         'type' => $data['type'],
         'description' => $data['description'],
         'author' => $data['author'] ?? $existing['author'] ?? '',
-        'source' => $data['source'] ?? $existing['source'] ?? '',
-        'jurisdiction' => $data['jurisdiction'] ?? $existing['jurisdiction'] ?? '',
-        'court' => $data['court'] ?? $existing['court'] ?? '',
-        'caseNumber' => $data['caseNumber'] ?? $existing['caseNumber'] ?? '',
-        'year' => $data['year'] ?? $existing['year'] ?? '',
+        // Eliminados: 'source', 'jurisdiction', 'court', 'caseNumber', 'year'
         'notes' => $data['notes'] ?? $existing['notes'] ?? '',
         'dateAdded' => $data['date'] ?? $existing['dateAdded'] ?? date('Y-m-d'),
         'updatedAt' => date('Y-m-d H:i:s'),
