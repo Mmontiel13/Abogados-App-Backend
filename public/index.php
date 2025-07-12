@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/Mexico_City');
 // Habilitar la visualización de todos los errores de PHP para depuración local
 // Estas líneas son útiles para desarrollo, pero Railway las gestiona de forma diferente.
 // Las mantendremos aquí por si las usas para un entorno de staging local antes de Railway.
